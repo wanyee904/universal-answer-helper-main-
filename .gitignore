@@ -1,3 +1,21 @@
 # Project exclude paths
 /.gradle/
 /app/build/
+/build/
+
+# 本地配置（含本机路径/用户名，禁止提交）
+local.properties
+
+# IDE 配置
+.idea/
+*.iml
+.vscode/
+
+# 构建产物与签名文件
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# Kotlin
+.kotlin/
