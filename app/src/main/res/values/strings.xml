@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">万能答题助手</string>
+    <string name="accessibility_desc">读取屏幕上的题目与选项文本并自动点击选项，用于答题辅助，适用于各类答题页面。</string>
+</resources>
