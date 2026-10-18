@@ -42,5 +42,9 @@ data class Answer(
     val options: List<String> = emptyList(),
     val reason: String,
     val confidence: Float,
-    val source: String
+    val source: String,
+    /** 单选题候选排序（接近度从高到低） */
+    val rank: List<String> = emptyList(),
+    /** 必错选项，不参与接近度着色 */
+    val wrong: List<String> = emptyList()
 )

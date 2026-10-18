@@ -10,6 +10,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.example.answerhelper.auto.AutoAnswerService
+import com.example.answerhelper.answer.AiClient
 import com.example.answerhelper.util.Prefs
 import com.google.android.material.switchmaterial.SwitchMaterial
 
@@ -21,7 +22,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var etReadCooldown: EditText
     private lateinit var switchAutoRead: SwitchMaterial
     private lateinit var switchAuto: SwitchMaterial
+    private lateinit var switchWebAi: SwitchMaterial
     private lateinit var tvStatus: TextView
+    private lateinit var tvAiStatus: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,7 +35,9 @@ class MainActivity : AppCompatActivity() {
         etReadCooldown = findViewById(R.id.et_read_cooldown)
         switchAutoRead = findViewById(R.id.switch_auto_read)
         switchAuto = findViewById(R.id.switch_auto)
+        switchWebAi = findViewById(R.id.switch_web_ai)
         tvStatus = findViewById(R.id.tv_status)
+        tvAiStatus = findViewById(R.id.tv_ai_status)
 
         findViewById<Button>(R.id.btn_overlay).setOnClickListener {
             startActivity(
@@ -43,6 +48,16 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
         findViewById<Button>(R.id.btn_start).setOnClickListener { requestStart() }
+
+        findViewById<Button>(R.id.btn_test_ai).setOnClickListener {
+            savePrefs()
+            val status = tvAiStatus
+            status.text = "测试中…"
+            Thread {
+                val result = AiClient.test(this)
+                runOnUiThread { status.text = result.message }
+            }.start()
+        }
 
         loadPrefs()
     }
@@ -80,6 +95,7 @@ class MainActivity : AppCompatActivity() {
         Prefs.set(this, "read_cooldown", etReadCooldown.text.toString().trim())
         Prefs.setBool(this, "auto_read", switchAutoRead.isChecked)
         Prefs.setBool(this, "auto_mode", switchAuto.isChecked)
+        Prefs.setBool(this, "web_ai_combo", switchWebAi.isChecked)
     }
 
     private fun loadPrefs() {
@@ -89,5 +105,6 @@ class MainActivity : AppCompatActivity() {
         etReadCooldown.setText(Prefs.get(this, "read_cooldown", "5"))
         switchAutoRead.isChecked = Prefs.getBool(this, "auto_read", true)
         switchAuto.isChecked = Prefs.getBool(this, "auto_mode", false)
+        switchWebAi.isChecked = Prefs.getBool(this, "web_ai_combo", true)
     }
 }

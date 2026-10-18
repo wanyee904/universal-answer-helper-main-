@@ -106,6 +106,18 @@
             android:textSize="12sp" />
 
         <Button
+            android:id="@+id/btn_resolve"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_weight="1"
+            android:minHeight="30dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp"
+            android:text="重新解题"
+            android:textSize="12sp" />
+
+        <Button
             android:id="@+id/btn_close"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -116,6 +128,39 @@
             android:paddingBottom="2dp"
             android:text="✕"
             android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- 单选 / 多选（仅选择题显示） -->
+    <LinearLayout
+        android:id="@+id/choice_mode_row"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <Button
+            android:id="@+id/btn_choice_single"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:minHeight="28dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp"
+            android:text="单选题"
+            android:textSize="11sp" />
+
+        <Button
+            android:id="@+id/btn_choice_multi"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_weight="1"
+            android:minHeight="28dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp"
+            android:text="多选题"
+            android:textSize="11sp" />
     </LinearLayout>
 
     <!-- 题型选择 -->

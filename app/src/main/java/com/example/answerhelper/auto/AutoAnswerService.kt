@@ -76,6 +76,11 @@ class AutoAnswerService : AccessibilityService() {
     private var btnTypeJudge: Button? = null
     private var btnTypeEssay: Button? = null
     private var btnTypeTranslate: Button? = null
+    private var choiceModeRow: LinearLayout? = null
+    private var btnChoiceSingle: Button? = null
+    private var btnChoiceMulti: Button? = null
+    private val multiPrefs = mutableMapOf<String, Boolean>()
+    private val ANSWER_COLOR = 0xFF2E7D32.toInt()
     private var editArea: LinearLayout? = null
     private var etStem: EditText? = null
     private var etSub: EditText? = null
@@ -190,6 +195,11 @@ class AutoAnswerService : AccessibilityService() {
         if (blocks.isEmpty()) {
             updateOverlay("未识别到题目，请停留在题目页", null, null)
             return
+        }
+        // 应用用户手动设置的“单选/多选”，避免自动重读覆盖手动选择
+        blocks = blocks.map { b ->
+            val pref = multiPrefs[stemKey(b.stem)]
+            if (pref == null) b else b.copy(stem = withMulti(b.stem, pref))
         }
         // 页面变化（题目列表变了）才重置为第 1 题；否则保持用户手动选择的题
         val changed = blocks.map { it.query } != detectedQuestions.map { it.query }
@@ -344,58 +354,92 @@ class AutoAnswerService : AccessibilityService() {
     }
 
     private fun inferFromTexts(items: List<TextItem>, raw: String): List<Question> {
+        val scoreLike = Regex("[（(]\\s*\\d+(?:\\.\\d+)?\\s*分\\s*[）)]")
+        val blankLike = Regex("[（(]\\s*[)）]")
         val stemLike = { t: String ->
-            t.contains("？") || t.contains("?") || t.contains("（）") ||
-                t.contains("( )") || t.contains("（ ）") || t.endsWith("()") ||
+            t.contains("？") || t.contains("?") ||
+                scoreLike.containsMatchIn(t) ||
+                blankLike.containsMatchIn(t) ||
                 Regex("_{2,}").containsMatchIn(t)
         }
-        val typeTag = Regex("^\\[?(单选题|多选题|判断题|填空|简答|论述)\\]?$")
-        val numLike = Regex("^\\d+\\s*[.、]?$")
-        val skipWords = setOf("提交", "保存", "下一节", "上一节", "由此作答", "待完成")
+        val sectionHeader = Regex("^[一二三四五六七八九十]+、\\s*(.+)")
+        val progressLike = Regex("^此题已选择\\s*\\d+\\s*/\\s*\\d+\\s*项$")
+        val prefixLike = Regex("^\\d+\\s*[.、]\\s*\\[[^\\]]*]\\s*")
+        val skipWords = setOf(
+            "提交", "保存", "保存草稿", "下一节", "上一节", "上一页", "下一页",
+            "由此作答", "待完成", "大纲", "WPS表单"
+        )
 
+        var sectionKind = ""
         val result = mutableListOf<Question>()
         var i = 0
         while (i < items.size) {
-            val stem = items[i].text.trim()
-            if (!stemLike(stem) || stem.length < 6) {
+            val rawStem = items[i].text.trim()
+
+            val sec = sectionHeader.matchEntire(rawStem)
+            if (sec != null) {
+                sectionKind = sec.groupValues[1]
                 i++
                 continue
             }
-            val prevTag = if (i >= 1) typeTag.matchEntire(items[i - 1].text.trim())?.groupValues?.get(1) else null
-            val prev2Tag = if (i >= 2) typeTag.matchEntire(items[i - 2].text.trim())?.groupValues?.get(1) else null
-            val judge = prevTag == "判断题" || prev2Tag == "判断题"
+
+            if (!stemLike(rawStem)) {
+                i++
+                continue
+            }
+
+            val stem = rawStem
+                .replace(prefixLike, "")
+                .replace(scoreLike, "")
+                .trim()
+            if (stem.length < 2) {
+                i++
+                continue
+            }
+
+            val judge = sectionKind.contains("判断") ||
+                rawStem.contains("[判断]") || rawStem.contains("判断题")
+            val multi = sectionKind.contains("多选") ||
+                rawStem.contains("[多选]") || rawStem.contains("多选题")
+            val stemForAi = if (multi) "（多选题）$stem" else stem
 
             var j = i + 1
-            // 跳过紧跟着的重复题干
-            while (j < items.size && items[j].text.trim() == stem) j++
+            while (j < items.size) {
+                val s = items[j].text.trim()
+                if (s == rawStem || s == stem || progressLike.matches(s)) {
+                    j++
+                    continue
+                }
+                break
+            }
 
             val opts = mutableListOf<OptionBox>()
             var label = 'A'
             while (j < items.size && opts.size < 26) {
                 val s = items[j].text.trim()
-                when {
-                    s == stem || stemLike(s) -> break
-                    typeTag.matches(s) -> j++
-                    numLike.matches(s) -> j++
-                    s in skipWords -> break
-                    s.length in 2..40 -> {
-                        opts.add(
-                            OptionBox(
-                                label.toString(), s,
-                                items[j].bounds.centerX(), items[j].bounds.centerY(),
-                                Rect(items[j].bounds), items[j].node
-                            )
+                if (stemLike(s) || sectionHeader.containsMatchIn(s) || progressLike.matches(s)) break
+                if (s in skipWords) {
+                    j++
+                    continue
+                }
+                if (s.length in 1..60) {
+                    opts.add(
+                        OptionBox(
+                            label.toString(), s,
+                            items[j].bounds.centerX(), items[j].bounds.centerY(),
+                            Rect(items[j].bounds), items[j].node
                         )
-                        label++
-                        j++
-                    }
-                    else -> j++
+                    )
+                    label++
+                    j++
+                } else {
+                    j++
                 }
             }
 
             if (opts.size >= 2) {
-                val kind = if (judge) QuestionKind.JUDGE else QuestionKind.CHOICE
-                val finalOpts = if (judge) {
+                val isJudge = judge || isJudge(opts)
+                val finalOpts = if (isJudge) {
                     listOf(
                         OptionBox("A", "是", opts[0].centerX, opts[0].centerY, Rect(), opts[0].node),
                         OptionBox("B", "否", opts[1].centerX, opts[1].centerY, Rect(), opts[1].node)
@@ -403,7 +447,14 @@ class AutoAnswerService : AccessibilityService() {
                 } else {
                     opts
                 }
-                result.add(Question(kind, stem = stem, options = finalOpts, rawText = raw))
+                result.add(
+                    Question(
+                        if (isJudge) QuestionKind.JUDGE else QuestionKind.CHOICE,
+                        stem = if (isJudge) stem else stemForAi,
+                        options = finalOpts,
+                        rawText = raw
+                    )
+                )
             } else if (judge) {
                 result.add(
                     Question(
@@ -447,12 +498,12 @@ class AutoAnswerService : AccessibilityService() {
             (a.contains("错") && b.contains("对"))
     }
 
-    private fun solveAndShow(question: Question) {
+    private fun solveAndShow(question: Question, force: Boolean = false) {
         val s = scope ?: return
         s.launch {
             if (editing) return@launch
             val answer = try {
-                AnswerEngine.solve(this@AutoAnswerService, question)
+                AnswerEngine.solve(this@AutoAnswerService, question, force)
             } catch (_: Exception) {
                 null
             }
@@ -490,6 +541,61 @@ class AutoAnswerService : AccessibilityService() {
         }
     }
 
+    private fun hasMulti(stem: String): Boolean =
+        Regex("^\\s*[（(【]\\s*多选题\\s*[）)】]").containsMatchIn(stem)
+
+    private fun stemKey(stem: String): String =
+        stem.replace(Regex("^\\s*[（(【]\\s*多选题\\s*[）)】]\\s*"), "").trim()
+
+    private fun withMulti(stem: String, multi: Boolean): String {
+        val stripped = stemKey(stem)
+        return if (multi) "（多选题）$stripped" else stripped
+    }
+
+    private fun setMultiChoice(multi: Boolean) {
+        val q = lastQuestion
+        if (q == null) {
+            updateOverlay("请先识别题目", null, null)
+            return
+        }
+        if (q.kind != QuestionKind.CHOICE) return
+        if (editing) {
+            val cur = etStem?.text?.toString() ?: ""
+            val newStem = withMulti(cur, multi)
+            etStem?.setText(newStem)
+            multiPrefs[stemKey(newStem)] = multi
+            btnChoiceSingle?.text = if (!multi) "●单选题" else "单选题"
+            btnChoiceMulti?.text = if (multi) "●多选题" else "多选题"
+            return
+        }
+        val newStem = withMulti(q.stem, multi)
+        if (newStem == q.stem) return
+        val newQ = q.copy(stem = newStem)
+        lastQuestion = newQ
+        multiPrefs[stemKey(newStem)] = multi
+        if (currentIndex in detectedQuestions.indices) detectedQuestions[currentIndex] = newQ
+        lastTitle = newQ.query
+        lastSeenAt = System.currentTimeMillis()
+        renderTypeButtons(newQ.kind)
+        updateOverlay("已切换为${if (multi) "多选题" else "单选题"}，正在重新解题…", newQ, null)
+        solveAndShow(newQ, force = true)
+    }
+
+    private fun resolveCurrent() {
+        val q = lastQuestion
+        if (q == null) {
+            updateOverlay("暂无可重新解题的题目，请先识别", null, null)
+            return
+        }
+        if (editing) {
+            updateOverlay("请先完成编辑", null, null)
+            return
+        }
+        lastSeenAt = System.currentTimeMillis()
+        updateOverlay("重新解题中（已跳过缓存与题库）…", q, null)
+        solveAndShow(q, force = true)
+    }
+
     private fun answerHeadline(q: Question?, a: Answer): String = when (q?.kind) {
         QuestionKind.ESSAY -> "答案：${a.text.ifBlank { a.label }}（${a.source}）"
         QuestionKind.TRANSLATE -> "译文（${a.source}）"
@@ -512,7 +618,33 @@ class AutoAnswerService : AccessibilityService() {
                 else -> emptySet()
             }
         }
-        return a.label.toCharArray().map { it.toString() }.toSet()
+        val letters = a.label.toCharArray().map { it.toString() }.toSet()
+        // 单选题只允许一个答案
+        if (q != null && q.kind == QuestionKind.CHOICE && !hasMulti(q.stem)) {
+            return letters.take(1).toSet()
+        }
+        return letters
+    }
+
+    /** 单选题选项着色：推荐=绿，其余按接近度 黄绿→琥珀→橙→红；必错选项不着色 */
+    private fun optionColors(q: Question, a: Answer?): Map<String, Int> {
+        if (a == null || q.kind != QuestionKind.CHOICE) return emptyMap()
+        if (hasMulti(q.stem)) {
+            return answerLabelSet(q, a).associateWith { ANSWER_COLOR }
+        }
+        val wrong = a.wrong.map { it.uppercase() }.toSet()
+        val rank = (listOf(a.label.uppercase().replace(" ", "").take(1)) + a.rank.map { it.uppercase() })
+            .filter { it.length == 1 }
+            .distinct()
+            .filter { it !in wrong }
+        val palette = intArrayOf(
+            0xFF2E7D32.toInt(),
+            0xFF7CB342.toInt(),
+            0xFFF9A825.toInt(),
+            0xFFEF6C00.toInt(),
+            0xFFC62828.toInt()
+        )
+        return rank.mapIndexed { idx, l -> l to palette[idx.coerceAtMost(palette.size - 1)] }.toMap()
     }
 
     // ---------- 点击 ----------
@@ -603,10 +735,13 @@ class AutoAnswerService : AccessibilityService() {
                 } else {
                     listOf(OptionBox("A", "是", 0, 0, Rect()), OptionBox("B", "否", 0, 0, Rect()))
                 }
-                q.copy(kind = QuestionKind.JUDGE, subQuestion = "", options = opts)
+                q.copy(kind = QuestionKind.JUDGE, stem = withMulti(q.stem, false), subQuestion = "", options = opts)
             }
-            QuestionKind.ESSAY -> q.copy(kind = QuestionKind.ESSAY, options = emptyList())
-            QuestionKind.TRANSLATE -> q.copy(kind = QuestionKind.TRANSLATE, subQuestion = "", options = emptyList())
+            QuestionKind.ESSAY -> q.copy(kind = QuestionKind.ESSAY, stem = withMulti(q.stem, false), options = emptyList())
+            QuestionKind.TRANSLATE -> q.copy(
+                kind = QuestionKind.TRANSLATE, stem = withMulti(q.stem, false),
+                subQuestion = "", options = emptyList()
+            )
         }
         currentKind = kind
         lastQuestion = newQ
@@ -621,6 +756,11 @@ class AutoAnswerService : AccessibilityService() {
         btnTypeJudge?.text = if (kind == QuestionKind.JUDGE) "●判断题" else "判断题"
         btnTypeEssay?.text = if (kind == QuestionKind.ESSAY) "●大题" else "大题"
         btnTypeTranslate?.text = if (kind == QuestionKind.TRANSLATE) "●翻译" else "翻译"
+        val isChoice = kind == QuestionKind.CHOICE
+        choiceModeRow?.visibility = if (isChoice) View.VISIBLE else View.GONE
+        val multi = hasMulti(lastQuestion?.stem ?: etStem?.text?.toString() ?: "")
+        btnChoiceSingle?.text = if (isChoice && !multi) "●单选题" else "单选题"
+        btnChoiceMulti?.text = if (isChoice && multi) "●多选题" else "多选题"
     }
 
     // ---------- 编辑 ----------
@@ -651,6 +791,10 @@ class AutoAnswerService : AccessibilityService() {
         etSub?.visibility = if (kind == QuestionKind.ESSAY) View.VISIBLE else View.GONE
         tvJudgeOptions?.visibility = if (kind == QuestionKind.JUDGE) View.VISIBLE else View.GONE
         val choice = kind == QuestionKind.CHOICE
+        choiceModeRow?.visibility = if (choice) View.VISIBLE else View.GONE
+        val multi = hasMulti(etStem?.text?.toString() ?: "")
+        btnChoiceSingle?.text = if (choice && !multi) "●单选题" else "单选题"
+        btnChoiceMulti?.text = if (choice && multi) "●多选题" else "多选题"
         optionCountRow?.visibility = if (choice) View.VISIBLE else View.GONE
         optionsEditContainer?.visibility = if (choice) View.VISIBLE else View.GONE
         optionsEditActions?.visibility = if (choice) View.VISIBLE else View.GONE
@@ -740,6 +884,7 @@ class AutoAnswerService : AccessibilityService() {
             setEditUi(false)
             editing = false
             lastQuestion = newQ
+            if (currentIndex in detectedQuestions.indices) detectedQuestions[currentIndex] = newQ
             lastTitle = newQ.query
             lastSeenAt = System.currentTimeMillis()
             updateOverlay("已更新，正在处理…", newQ, null)
@@ -805,6 +950,9 @@ class AutoAnswerService : AccessibilityService() {
         btnTypeJudge = view.findViewById(R.id.btn_type_judge)
         btnTypeEssay = view.findViewById(R.id.btn_type_essay)
         btnTypeTranslate = view.findViewById(R.id.btn_type_translate)
+        choiceModeRow = view.findViewById(R.id.choice_mode_row)
+        btnChoiceSingle = view.findViewById(R.id.btn_choice_single)
+        btnChoiceMulti = view.findViewById(R.id.btn_choice_multi)
         editArea = view.findViewById(R.id.edit_area)
         etStem = view.findViewById(R.id.et_stem)
         etSub = view.findViewById(R.id.et_sub)
@@ -844,6 +992,9 @@ class AutoAnswerService : AccessibilityService() {
         btnTypeJudge?.setOnClickListener { onTypeButton(QuestionKind.JUDGE) }
         btnTypeEssay?.setOnClickListener { onTypeButton(QuestionKind.ESSAY) }
         btnTypeTranslate?.setOnClickListener { onTypeButton(QuestionKind.TRANSLATE) }
+        view.findViewById<Button>(R.id.btn_resolve).setOnClickListener { resolveCurrent() }
+        btnChoiceSingle?.setOnClickListener { setMultiChoice(false) }
+        btnChoiceMulti?.setOnClickListener { setMultiChoice(true) }
         btnCollapse?.setOnClickListener { collapseToBall() }
         view.findViewById<Button>(R.id.btn_close).setOnClickListener { stopHelper() }
 
@@ -884,13 +1035,16 @@ class AutoAnswerService : AccessibilityService() {
             val correct = answerLabelSet(question, answer)
             when (question.kind) {
                 QuestionKind.CHOICE -> {
+                    val colors = optionColors(question, answer)
                     for (opt in question.options) {
-                        container.addView(makeOptionButton("${opt.label}. ${opt.text}", opt.label, opt.label in correct))
+                        container.addView(
+                            makeOptionButton("${opt.label}. ${opt.text}", opt.label, colors[opt.label])
+                        )
                     }
                 }
                 QuestionKind.JUDGE -> {
-                    container.addView(makeOptionButton("A. 是", "A", "A" in correct))
-                    container.addView(makeOptionButton("B. 否", "B", "B" in correct))
+                    container.addView(makeOptionButton("A. 是", "A", if ("A" in correct) ANSWER_COLOR else null))
+                    container.addView(makeOptionButton("B. 否", "B", if ("B" in correct) ANSWER_COLOR else null))
                 }
                 QuestionKind.ESSAY, QuestionKind.TRANSLATE -> Unit
             }
@@ -905,14 +1059,14 @@ class AutoAnswerService : AccessibilityService() {
         setCollapsed(question == null && answer == null && collapsed)
     }
 
-    private fun makeOptionButton(text: String, label: String, highlighted: Boolean = false): Button {
+    private fun makeOptionButton(text: String, label: String, highlightColor: Int? = null): Button {
         return Button(this).apply {
             this.text = text
             textSize = 12f
             minHeight = 0
             setPadding(8, 6, 8, 6)
-            if (highlighted) {
-                setBackgroundColor(0xFF2E7D32.toInt())
+            if (highlightColor != null) {
+                setBackgroundColor(highlightColor)
                 setTextColor(0xFFFFFFFF.toInt())
             }
             setOnClickListener { choose(label) }
