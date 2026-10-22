@@ -62,6 +62,16 @@ object AiClient {
                 "你是翻译助手。请翻译用户给出的文本：若源文本主要是中文，翻译成英文；否则翻译成中文。保持原文排版（段落、换行、列表等格式尽量保留）。只返回JSON，不要其他文字。格式：{\"answer\":\"译文\",\"reason\":\"\"}" to
                     "文本：\n${question.stem}"
             }
+            QuestionKind.CLOZE -> {
+                val bank = question.options.joinToString("\n") { "${it.label}) ${it.text}" }
+                val uniqueRule = if (Prefs.getBool(ctx, "cloze_unique", true)) {
+                    "每个词只能使用一次，答案中不能出现重复字母。"
+                } else {
+                    "同一个词可以重复使用，答案中允许出现重复字母。"
+                }
+                "你是答题助手。这是一道完型填空（选词填空）：文章里有若干编号的空（1、2、3…），词库为 A)… 形式。$uniqueRule 请为每个空选出最合适的词。只返回JSON，不要其他文字。格式：{\"answer\":\"1=C,2=A,3=B\",\"reason\":\"简短理由\"}" to
+                    "文章：\n${question.stem}\n\n词库：\n$bank"
+            }
         }
 
         try {
@@ -209,6 +219,10 @@ object AiClient {
                 QuestionKind.TRANSLATE -> {
                     if (raw.isBlank()) null
                     else Answer("", text = raw, reason = reason, confidence = 0.95f, source = "AI翻译")
+                }
+                QuestionKind.CLOZE -> {
+                    if (raw.isBlank()) null
+                    else Answer(raw, text = raw, reason = reason, confidence = 0.9f, source = "AI")
                 }
             }
         } catch (_: Exception) {

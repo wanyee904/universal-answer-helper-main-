@@ -1,8 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="primary">#FB7299</color>
-    <color name="primary_dark">#E05E85</color>
-    <color name="bg">#FFF5F7</color>
+    <!-- Material 3 色调（绿系种子色，参照 KernelSU 的 MD3 Expressive 观感） -->
+    <color name="md_primary">#2E6B33</color>
+    <color name="md_on_primary">#FFFFFF</color>
+    <color name="md_primary_container">#B0F1AC</color>
+    <color name="md_on_primary_container">#002106</color>
+    <color name="md_secondary_container">#D3E8CD</color>
+    <color name="md_on_secondary_container">#0D200C</color>
+    <color name="md_surface">#FBFDF6</color>
+    <color name="md_on_surface">#191C18</color>
+    <color name="md_surface_container">#EFF2E9</color>
+    <color name="md_surface_container_high">#E9EDE3</color>
+    <color name="md_surface_variant">#DFE4DA</color>
+    <color name="md_on_surface_variant">#43483F</color>
+    <color name="md_outline">#73796C</color>
+    <color name="md_outline_variant">#C3C8BC</color>
+    <color name="md_error">#BA1A1A</color>
+
+    <!-- 启动页：浅色主题 白底黑标 -->
+    <color name="splash_bg">#FFFFFF</color>
+    <color name="splash_ink">#000000</color>
+
+    <!-- 旧名保留，避免历史引用失效 -->
+    <color name="primary">#2E6B33</color>
+    <color name="primary_dark">#1F4E24</color>
+    <color name="bg">#FBFDF6</color>
     <color name="white">#FFFFFF</color>
-    <color name="ic_launcher_background">#FB7299</color>
+    <color name="ic_launcher_background">#2E6B33</color>
 </resources>

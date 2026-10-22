@@ -7,7 +7,8 @@ enum class QuestionKind(val label: String) {
     CHOICE("选择题"),
     JUDGE("判断题"),
     ESSAY("大题"),
-    TRANSLATE("翻译")
+    TRANSLATE("翻译"),
+    CLOZE("完型填空")
 }
 
 /** 一个选项及其对应的屏幕节点（用于直接点击） */

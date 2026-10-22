@@ -35,7 +35,10 @@ object AnswerEngine {
             cache[key]?.let { return it }
         }
 
-        if (question.kind == QuestionKind.ESSAY || question.kind == QuestionKind.TRANSLATE) {
+        if (question.kind == QuestionKind.ESSAY ||
+            question.kind == QuestionKind.TRANSLATE ||
+            question.kind == QuestionKind.CLOZE
+        ) {
             val a = AiClient.ask(ctx, question)
             if (a != null) cache[key] = a
             return a

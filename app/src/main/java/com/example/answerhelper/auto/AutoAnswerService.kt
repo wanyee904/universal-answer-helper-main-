@@ -6,7 +6,10 @@ import android.content.Intent
 import android.graphics.PixelFormat
 import android.graphics.Path
 import android.graphics.Rect
+import android.content.res.ColorStateList
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -76,6 +79,7 @@ class AutoAnswerService : AccessibilityService() {
     private var btnTypeJudge: Button? = null
     private var btnTypeEssay: Button? = null
     private var btnTypeTranslate: Button? = null
+    private var btnTypeCloze: Button? = null
     private var choiceModeRow: LinearLayout? = null
     private var btnChoiceSingle: Button? = null
     private var btnChoiceMulti: Button? = null
@@ -99,7 +103,7 @@ class AutoAnswerService : AccessibilityService() {
     private fun optionCount(): Int =
         (Prefs.get(this, "option_count", "4").toIntOrNull() ?: 4).coerceIn(2, 26)
 
-    private fun autoReadEnabled(): Boolean = Prefs.getBool(this, "auto_read", true)
+    private fun autoReadEnabled(): Boolean = Prefs.getBool(this, "auto_read", false)
 
     private fun readCooldownMs(): Long =
         (Prefs.get(this, "read_cooldown", "5").toIntOrNull() ?: 5).coerceIn(2, 120) * 1000L
@@ -192,8 +196,10 @@ class AutoAnswerService : AccessibilityService() {
             blocks = extractBlocks(r)
             if (blocks.isNotEmpty()) break
         }
+        // 只保留已开启的功能类型
+        blocks = blocks.filter { isKindEnabled(it.kind) }
         if (blocks.isEmpty()) {
-            updateOverlay("未识别到题目，请停留在题目页", null, null)
+            updateOverlay("未识别到已开启题型的题目（可在主页开启更多功能）", null, null)
             return
         }
         // 应用用户手动设置的“单选/多选”，避免自动重读覆盖手动选择
@@ -253,7 +259,7 @@ class AutoAnswerService : AccessibilityService() {
 
     private fun collectItems(node: AccessibilityNodeInfo, out: MutableList<TextItem>) {
         val t = node.text?.toString()?.trim() ?: ""
-        val keep = t.length in 2..500 ||
+        val keep = t.length in 2..4000 ||
             (t.length == 1 && t[0] in 'A'..'H') ||
             t in listOf("对", "错", "是", "否")
         if (keep) {
@@ -272,7 +278,9 @@ class AutoAnswerService : AccessibilityService() {
         if (items.isEmpty()) return emptyList()
         val raw = items.joinToString("\n") { it.text }
 
-        if (currentKind == QuestionKind.TRANSLATE) {
+        parseCloze(items, raw)?.let { return listOf(it) }
+
+        if (currentKind == QuestionKind.TRANSLATE && isKindEnabled(QuestionKind.TRANSLATE)) {
             return listOf(Question(QuestionKind.TRANSLATE, stem = raw, rawText = raw))
         }
 
@@ -287,7 +295,9 @@ class AutoAnswerService : AccessibilityService() {
         var lastWasContent = false
 
         for ((i, item) in items.withIndex()) {
-            val sm = sameNodeRegex.matchEntire(item.text)
+            val smRaw = sameNodeRegex.matchEntire(item.text)
+            // 只有标号的节点（如 "A、" "A."）交给分离解析，否则内容会丢失
+            val sm = if (smRaw != null && smRaw.groupValues[2].trim().isNotEmpty()) smRaw else null
             val lm = if (sm == null) labelOnlyRegex.matchEntire(item.text) else null
             if (sm != null) {
                 if (cur != null && cur.options.size >= 2 && !lastWasContent) {
@@ -351,6 +361,74 @@ class AutoAnswerService : AccessibilityService() {
         if (blocks.isNotEmpty()) return blocks
         // 页面没有暴露选项标号时，按“题干 + 连续短文本”兜底推断
         return inferFromTexts(items, raw)
+    }
+
+    /** 选词填空（完型）：一段带编号空的文章 + A)..O) 词库 */
+    private fun parseCloze(items: List<TextItem>, raw: String): Question? {
+        if (!isKindEnabled(QuestionKind.CLOZE)) return null
+        val hasMarker = items.any {
+            it.text.contains("完型") || it.text.contains("完形") ||
+                it.text.contains("Word Bank", ignoreCase = true) ||
+                it.text.contains("Fill in the blanks", ignoreCase = true)
+        }
+        if (!hasMarker) return null
+
+        val bank = linkedMapOf<String, String>()
+        val pairRegex = Regex(
+            "([A-O])\\s*[)）.、:：]\\s*((?:[A-Za-z][A-Za-z'’\\-]*)(?:\\s+(?![A-O]\\s*[)）.、:：])[A-Za-z][A-Za-z'’\\-]*){0,3})"
+        )
+        for (it in items) {
+            for (m in pairRegex.findAll(it.text)) {
+                val label = m.groupValues[1]
+                val word = m.groupValues[2].trim()
+                if (label !in bank) bank[label] = word
+            }
+        }
+        if (bank.size < 4) return null
+
+        val passage = items
+            .filter { it.text.length > 80 }
+            .maxByOrNull { t -> Regex("\\s\\d{1,2}\\s").findAll(t.text).count() }
+            ?.text ?: return null
+        if (Regex("\\s\\d{1,2}\\s").findAll(passage).count() < 2) return null
+
+        val options = bank.map { (l, w) -> OptionBox(l, w, 0, 0, Rect()) }
+        return Question(QuestionKind.CLOZE, stem = passage, options = options, rawText = raw)
+    }
+
+    private fun parseClozeAnswer(text: String): List<Pair<Int, String>> =
+        Regex("(\\d{1,2})\\s*[=:：]\\s*([A-O])").findAll(text)
+            .map { it.groupValues[1].toInt() to it.groupValues[2] }
+            .distinctBy { it.first }
+            .toList()
+
+    private fun findNodeByTextExact(node: AccessibilityNodeInfo, text: String): AccessibilityNodeInfo? {
+        if (node.text?.toString()?.trim() == text) return node
+        for (i in 0 until node.childCount) {
+            val c = node.getChild(i) ?: continue
+            findNodeByTextExact(c, text)?.let { return it }
+        }
+        return null
+    }
+
+    private fun collectLetterNodes(node: AccessibilityNodeInfo, out: MutableList<AccessibilityNodeInfo>) {
+        val t = node.text?.toString()?.trim()
+        if (t != null && t.length == 1 && t[0] in 'A'..'O') out.add(node)
+        for (i in 0 until node.childCount) node.getChild(i)?.let { collectLetterNodes(it, out) }
+    }
+
+    private fun clickClozeBlank(blank: Int, letter: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val container = findNodeByTextExact(root, blank.toString())
+        if (container != null) {
+            val target = findNodeByTextExact(container, letter)
+                ?: container.parent?.let { findNodeByTextExact(it, letter) }
+            if (target != null && clickNode(target)) return true
+        }
+        val letters = mutableListOf<AccessibilityNodeInfo>()
+        collectLetterNodes(root, letters)
+        val idx = (blank - 1) * 15 + (letter[0] - 'A')
+        return clickNode(letters.getOrNull(idx))
     }
 
     private fun inferFromTexts(items: List<TextItem>, raw: String): List<Question> {
@@ -599,6 +677,7 @@ class AutoAnswerService : AccessibilityService() {
     private fun answerHeadline(q: Question?, a: Answer): String = when (q?.kind) {
         QuestionKind.ESSAY -> "答案：${a.text.ifBlank { a.label }}（${a.source}）"
         QuestionKind.TRANSLATE -> "译文（${a.source}）"
+        QuestionKind.CLOZE -> "答案：${a.text}（${a.source}）"
         QuestionKind.JUDGE -> "推荐：${judgeText(a.label)}（${a.source}）"
         else -> "推荐：${a.label}（${a.source}）"
     }
@@ -705,6 +784,7 @@ class AutoAnswerService : AccessibilityService() {
     // ---------- 题型切换 ----------
 
     private fun onTypeButton(kind: QuestionKind) {
+        if (!isKindEnabled(kind)) return
         if (editing) {
             currentKind = kind
             renderTypeButtons(kind)
@@ -742,6 +822,7 @@ class AutoAnswerService : AccessibilityService() {
                 kind = QuestionKind.TRANSLATE, stem = withMulti(q.stem, false),
                 subQuestion = "", options = emptyList()
             )
+            QuestionKind.CLOZE -> q.copy(kind = QuestionKind.CLOZE, subQuestion = "")
         }
         currentKind = kind
         lastQuestion = newQ
@@ -751,12 +832,34 @@ class AutoAnswerService : AccessibilityService() {
         solveAndShow(newQ)
     }
 
+    private fun isKindEnabled(kind: QuestionKind): Boolean = when (kind) {
+        QuestionKind.CHOICE -> Prefs.getBool(this, "kind_choice", true)
+        QuestionKind.JUDGE -> Prefs.getBool(this, "kind_judge", true)
+        QuestionKind.ESSAY -> Prefs.getBool(this, "kind_essay", true)
+        QuestionKind.CLOZE -> Prefs.getBool(this, "kind_cloze", true)
+        QuestionKind.TRANSLATE -> Prefs.getBool(this, "kind_translate", true)
+    }
+
     private fun renderTypeButtons(kind: QuestionKind) {
+        val choiceOn = isKindEnabled(QuestionKind.CHOICE)
+        val judgeOn = isKindEnabled(QuestionKind.JUDGE)
+        val essayOn = isKindEnabled(QuestionKind.ESSAY)
+        val clozeOn = isKindEnabled(QuestionKind.CLOZE)
+        val translateOn = isKindEnabled(QuestionKind.TRANSLATE)
+
         btnTypeChoice?.text = if (kind == QuestionKind.CHOICE) "●选择题" else "选择题"
         btnTypeJudge?.text = if (kind == QuestionKind.JUDGE) "●判断题" else "判断题"
         btnTypeEssay?.text = if (kind == QuestionKind.ESSAY) "●大题" else "大题"
+        btnTypeCloze?.text = if (kind == QuestionKind.CLOZE) "●完型填空" else "完型填空"
         btnTypeTranslate?.text = if (kind == QuestionKind.TRANSLATE) "●翻译" else "翻译"
-        val isChoice = kind == QuestionKind.CHOICE
+
+        btnTypeChoice?.visibility = if (choiceOn) View.VISIBLE else View.GONE
+        btnTypeJudge?.visibility = if (judgeOn) View.VISIBLE else View.GONE
+        btnTypeEssay?.visibility = if (essayOn) View.VISIBLE else View.GONE
+        btnTypeCloze?.visibility = if (clozeOn) View.VISIBLE else View.GONE
+        btnTypeTranslate?.visibility = if (translateOn) View.VISIBLE else View.GONE
+
+        val isChoice = kind == QuestionKind.CHOICE && choiceOn
         choiceModeRow?.visibility = if (isChoice) View.VISIBLE else View.GONE
         val multi = hasMulti(lastQuestion?.stem ?: etStem?.text?.toString() ?: "")
         btnChoiceSingle?.text = if (isChoice && !multi) "●单选题" else "单选题"
@@ -785,6 +888,7 @@ class AutoAnswerService : AccessibilityService() {
     private fun applyEditUiForKind(kind: QuestionKind, options: List<OptionBox>) {
         etStem?.hint = when (kind) {
             QuestionKind.TRANSLATE -> "要翻译的文本"
+            QuestionKind.CLOZE -> "文章原文"
             QuestionKind.ESSAY -> "主题干区"
             else -> "题干区"
         }
@@ -878,6 +982,7 @@ class AutoAnswerService : AccessibilityService() {
                     OptionBox("A", "是", 0, 0, Rect(), old.getOrNull(0)?.node),
                     OptionBox("B", "否", 0, 0, Rect(), old.getOrNull(1)?.node)
                 )
+                QuestionKind.CLOZE -> old
                 QuestionKind.ESSAY, QuestionKind.TRANSLATE -> emptyList()
             }
             val newQ = Question(currentKind, stem, sub, options, lastQuestion?.rawText ?: "")
@@ -950,6 +1055,7 @@ class AutoAnswerService : AccessibilityService() {
         btnTypeJudge = view.findViewById(R.id.btn_type_judge)
         btnTypeEssay = view.findViewById(R.id.btn_type_essay)
         btnTypeTranslate = view.findViewById(R.id.btn_type_translate)
+        btnTypeCloze = view.findViewById(R.id.btn_type_cloze)
         choiceModeRow = view.findViewById(R.id.choice_mode_row)
         btnChoiceSingle = view.findViewById(R.id.btn_choice_single)
         btnChoiceMulti = view.findViewById(R.id.btn_choice_multi)
@@ -992,6 +1098,7 @@ class AutoAnswerService : AccessibilityService() {
         btnTypeJudge?.setOnClickListener { onTypeButton(QuestionKind.JUDGE) }
         btnTypeEssay?.setOnClickListener { onTypeButton(QuestionKind.ESSAY) }
         btnTypeTranslate?.setOnClickListener { onTypeButton(QuestionKind.TRANSLATE) }
+        btnTypeCloze?.setOnClickListener { onTypeButton(QuestionKind.CLOZE) }
         view.findViewById<Button>(R.id.btn_resolve).setOnClickListener { resolveCurrent() }
         btnChoiceSingle?.setOnClickListener { setMultiChoice(false) }
         btnChoiceMulti?.setOnClickListener { setMultiChoice(true) }
@@ -1046,6 +1153,16 @@ class AutoAnswerService : AccessibilityService() {
                     container.addView(makeOptionButton("A. 是", "A", if ("A" in correct) ANSWER_COLOR else null))
                     container.addView(makeOptionButton("B. 否", "B", if ("B" in correct) ANSWER_COLOR else null))
                 }
+                QuestionKind.CLOZE -> {
+                    val pairs = parseClozeAnswer(answer?.text ?: "")
+                    if (pairs.isEmpty()) {
+                        tvQuestion?.text = "文章：\n" + question.stem.take(300)
+                    } else {
+                        for ((blank, letter) in pairs) {
+                            container.addView(makeBlankButton(blank, letter))
+                        }
+                    }
+                }
                 QuestionKind.ESSAY, QuestionKind.TRANSLATE -> Unit
             }
         }
@@ -1059,17 +1176,41 @@ class AutoAnswerService : AccessibilityService() {
         setCollapsed(question == null && answer == null && collapsed)
     }
 
+    private fun pillBackground(color: Int, radiusDp: Float = 12f): Drawable {
+        val solid = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = radiusDp * resources.displayMetrics.density
+            setColor(color)
+        }
+        return RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), solid, null)
+    }
+
     private fun makeOptionButton(text: String, label: String, highlightColor: Int? = null): Button {
         return Button(this).apply {
             this.text = text
             textSize = 12f
             minHeight = 0
-            setPadding(8, 6, 8, 6)
-            if (highlightColor != null) {
-                setBackgroundColor(highlightColor)
+            setPadding(16, 9, 16, 9)
+            background = if (highlightColor != null) {
                 setTextColor(0xFFFFFFFF.toInt())
+                pillBackground(highlightColor)
+            } else {
+                setTextColor(0xFFF2F5EF.toInt())
+                pillBackground(0x1FFFFFFF)
             }
             setOnClickListener { choose(label) }
+        }
+    }
+
+    private fun makeBlankButton(blank: Int, letter: String): Button {
+        return Button(this).apply {
+            text = "第${blank}空 → $letter"
+            textSize = 12f
+            minHeight = 0
+            setPadding(16, 9, 16, 9)
+            background = pillBackground(ANSWER_COLOR)
+            setTextColor(0xFFFFFFFF.toInt())
+            setOnClickListener { clickClozeBlank(blank, letter) }
         }
     }
 

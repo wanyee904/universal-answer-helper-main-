@@ -4,7 +4,8 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:background="#80111111"
+    android:background="@drawable/bg_overlay"
+    android:elevation="8dp"
     android:paddingStart="8dp"
     android:paddingEnd="8dp"
     android:paddingTop="6dp"
@@ -30,6 +31,9 @@
             android:textStyle="bold" />
 
         <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
             android:id="@+id/btn_prev"
             android:layout_width="30dp"
             android:layout_height="30dp"
@@ -41,6 +45,9 @@
             android:textSize="13sp" />
 
         <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
             android:id="@+id/btn_next"
             android:layout_width="30dp"
             android:layout_height="30dp"
@@ -52,6 +59,9 @@
             android:textSize="13sp" />
 
         <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
             android:id="@+id/btn_collapse"
             android:layout_width="36dp"
             android:layout_height="30dp"
@@ -71,6 +81,9 @@
         android:orientation="horizontal">
 
         <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
             android:id="@+id/btn_capture"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -82,6 +95,9 @@
             android:textSize="12sp" />
 
         <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
             android:id="@+id/btn_region"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -94,6 +110,9 @@
             android:textSize="12sp" />
 
         <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
             android:id="@+id/btn_edit"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -106,6 +125,9 @@
             android:textSize="12sp" />
 
         <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
             android:id="@+id/btn_resolve"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -118,6 +140,9 @@
             android:textSize="12sp" />
 
         <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
             android:id="@+id/btn_close"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -140,6 +165,9 @@
         android:visibility="gone">
 
         <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
             android:id="@+id/btn_choice_single"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -151,6 +179,9 @@
             android:textSize="11sp" />
 
         <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
             android:id="@+id/btn_choice_multi"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -163,61 +194,95 @@
             android:textSize="11sp" />
     </LinearLayout>
 
-    <!-- 题型选择 -->
-    <LinearLayout
-        android:id="@+id/type_selector"
+    <!-- 题型选择：只显示已开启的功能，按钮等宽，超出横向滚动 -->
+    <HorizontalScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp"
-        android:orientation="horizontal">
+        android:fillViewport="false"
+        android:scrollbars="none">
 
-        <Button
-            android:id="@+id/btn_type_choice"
-            android:layout_width="0dp"
+        <LinearLayout
+            android:id="@+id/type_selector"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:minHeight="28dp"
-            android:paddingTop="2dp"
-            android:paddingBottom="2dp"
-            android:text="选择题"
-            android:textSize="11sp" />
+            android:orientation="horizontal">
 
-        <Button
-            android:id="@+id/btn_type_judge"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="4dp"
-            android:layout_weight="1"
-            android:minHeight="28dp"
-            android:paddingTop="2dp"
-            android:paddingBottom="2dp"
-            android:text="判断题"
-            android:textSize="11sp" />
+            <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
+                android:id="@+id/btn_type_choice"
+                android:layout_width="88dp"
+                android:layout_height="32dp"
+                android:minHeight="0dp"
+                android:minWidth="0dp"
+                android:paddingTop="2dp"
+                android:paddingBottom="2dp"
+                android:text="选择题"
+                android:textSize="11sp" />
 
-        <Button
-            android:id="@+id/btn_type_essay"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="4dp"
-            android:layout_weight="1"
-            android:minHeight="28dp"
-            android:paddingTop="2dp"
-            android:paddingBottom="2dp"
-            android:text="大题"
-            android:textSize="11sp" />
+            <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
+                android:id="@+id/btn_type_judge"
+                android:layout_width="88dp"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:minHeight="0dp"
+                android:minWidth="0dp"
+                android:paddingTop="2dp"
+                android:paddingBottom="2dp"
+                android:text="判断题"
+                android:textSize="11sp" />
 
-        <Button
-            android:id="@+id/btn_type_translate"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="4dp"
-            android:layout_weight="1"
-            android:minHeight="28dp"
-            android:paddingTop="2dp"
-            android:paddingBottom="2dp"
-            android:text="翻译"
-            android:textSize="11sp" />
-    </LinearLayout>
+            <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
+                android:id="@+id/btn_type_essay"
+                android:layout_width="88dp"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:minHeight="0dp"
+                android:minWidth="0dp"
+                android:paddingTop="2dp"
+                android:paddingBottom="2dp"
+                android:text="大题"
+                android:textSize="11sp" />
+
+            <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
+                android:id="@+id/btn_type_cloze"
+                android:layout_width="88dp"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:minHeight="0dp"
+                android:minWidth="0dp"
+                android:paddingTop="2dp"
+                android:paddingBottom="2dp"
+                android:text="完型填空"
+                android:textSize="11sp" />
+
+            <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
+                android:id="@+id/btn_type_translate"
+                android:layout_width="88dp"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:minHeight="0dp"
+                android:minWidth="0dp"
+                android:paddingTop="2dp"
+                android:paddingBottom="2dp"
+                android:text="翻译"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </HorizontalScrollView>
 
     <!-- 内容区：最高 1/3 屏，超出滚动 -->
     <com.example.answerhelper.auto.MaxHeightScrollView
@@ -343,6 +408,9 @@
                     android:visibility="gone">
 
                     <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
                         android:id="@+id/btn_add_option"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -354,6 +422,9 @@
                         android:textSize="11sp" />
 
                     <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
                         android:id="@+id/btn_remove_option"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -373,6 +444,9 @@
                     android:orientation="horizontal">
 
                     <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
                         android:id="@+id/btn_edit_cancel"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -384,6 +458,9 @@
                         android:textSize="11sp" />
 
                     <Button
+            android:background="@drawable/bg_overlay_btn"
+            android:textAllCaps="false"
+            android:textColor="#F2F5EF"
                         android:id="@+id/btn_edit_confirm"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
