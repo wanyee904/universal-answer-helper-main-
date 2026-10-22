@@ -1,0 +1,264 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/md_surface"
+    android:fillViewport="true"
+    android:scrollbars="none">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="20dp"
+        android:paddingTop="28dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="32dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-medium"
+            android:text="使用教程"
+            android:textColor="@color/md_on_surface"
+            android:textSize="26sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="完成下面 3 步，再点「开始答题」即可"
+            android:textColor="@color/md_on_surface_variant"
+            android:textSize="13sp" />
+
+        <!-- 1 无障碍 -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            app:cardBackgroundColor="@color/md_surface_container"
+            app:cardCornerRadius="24dp"
+            app:cardElevation="0dp"
+            app:strokeWidth="0dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="① 开启无障碍服务"
+                    android:textColor="@color/md_on_surface"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:id="@+id/tv_tut_a11y"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:lineSpacingExtra="4dp"
+                    android:text="1. 点下方按钮进入系统「无障碍 / 辅助功能」\n2. 选择「已下载的应用」（部分机型叫「已下载的服务」）\n3. 找到「万能答题助手」，打开开关\n4. 系统提示「允许此应用控制设备」时点允许\n\n注意：重装应用后授权会失效，需要重新开关一次。"
+                    android:textColor="@color/md_on_surface_variant"
+                    android:textSize="13sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_tut_a11y"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="14dp"
+                    android:text="打开无障碍设置"
+                    android:textColor="@color/md_on_secondary_container"
+                    android:textSize="14sp"
+                    app:backgroundTint="@color/md_secondary_container"
+                    app:cornerRadius="24dp" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 2 后台 -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            app:cardBackgroundColor="@color/md_surface_container"
+            app:cardCornerRadius="24dp"
+            app:cardElevation="0dp"
+            app:strokeWidth="0dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="② 允许完全后台行为"
+                    android:textColor="@color/md_on_surface"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:lineSpacingExtra="4dp"
+                    android:text="OPPO / ColorOS：设置 → 电池 → 应用耗电管理 → 万能答题助手 → 允许完全后台行为\n\n小米 / HyperOS：设置 → 应用设置 → 应用管理 → 万能答题助手 → 省电策略 → 无限制，并打开「自启动」\n\n其他机型：设置 → 应用 → 万能答题助手 → 电池 → 不限制\n\n最后：在最近任务界面把本应用下拉锁定，避免被清理。"
+                    android:textColor="@color/md_on_surface_variant"
+                    android:textSize="13sp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_tut_app_info"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="0dp"
+                        android:layout_height="48dp"
+                        android:layout_weight="1"
+                        android:text="应用详情"
+                        android:textColor="@color/md_on_secondary_container"
+                        android:textSize="13sp"
+                        app:backgroundTint="@color/md_secondary_container"
+                        app:cornerRadius="24dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_tut_battery"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="0dp"
+                        android:layout_height="48dp"
+                        android:layout_marginStart="10dp"
+                        android:layout_weight="1"
+                        android:text="电池优化"
+                        android:textColor="@color/md_on_secondary_container"
+                        android:textSize="13sp"
+                        app:backgroundTint="@color/md_secondary_container"
+                        app:cornerRadius="24dp" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 3 DeepSeek API -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            app:cardBackgroundColor="@color/md_surface_container"
+            app:cardCornerRadius="24dp"
+            app:cardElevation="0dp"
+            app:strokeColor="@color/md_outline_variant"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="③ 创建 DeepSeek API Key"
+                    android:textColor="@color/md_on_surface"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:lineSpacingExtra="4dp"
+                    android:text="1. 打开 platform.deepseek.com，注册并登录\n2. 左侧「API keys」→「创建 API key」，名字随意\n3. Key 只显示一次，立即复制保存\n4. 回到本应用填写：\n     接口地址  https://api.deepseek.com/v1\n     模型名    deepseek-chat\n     API Key   粘贴刚才复制的 Key\n5. 点「测试 AI 连接」，看到「连接成功」即配置正确"
+                    android:textColor="@color/md_on_surface_variant"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:lineSpacingExtra="4dp"
+                    android:text="注意事项\n· Key 等同于密码，不要发给他人、不要提交到 GitHub\n· 账户需要有余额，欠费会直接请求失败\n· 按 token 计费：「联网 + AI 并行」每题都会调用 AI，想省额度可关闭该开关\n· 常见报错：401 = Key 错误；404 = 地址少了 /v1\n· 也支持其他 OpenAI 兼容服务（智谱 GLM、通义千问等），填对应地址和模型即可"
+                    android:textColor="@color/md_on_surface_variant"
+                    android:textSize="13sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_tut_deepseek"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="14dp"
+                    android:text="打开 DeepSeek 开放平台"
+                    android:textColor="@color/md_on_secondary_container"
+                    android:textSize="14sp"
+                    app:backgroundTint="@color/md_secondary_container"
+                    app:cornerRadius="24dp" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 4 快速开始 -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            app:cardBackgroundColor="@color/md_surface_container"
+            app:cardCornerRadius="24dp"
+            app:cardElevation="0dp"
+            app:strokeWidth="0dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="快速开始"
+                    android:textColor="@color/md_on_surface"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:lineSpacingExtra="4dp"
+                    android:text="1. 填好 AI 配置并测试连接\n2. 在「功能自定义」里勾选需要的题型（至少一项）\n3. 授予悬浮窗权限 + 开启无障碍\n4. 点「开始答题」，切到答题页面\n5. 悬浮窗会显示题目与推荐答案：手动点选项按钮，或开启自动识别 + 自动点击"
+                    android:textColor="@color/md_on_surface_variant"
+                    android:textSize="13sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_tut_a11y_top"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="14dp"
+                    android:text="打开无障碍设置"
+                    android:textColor="@color/md_on_secondary_container"
+                    android:textSize="14sp"
+                    app:backgroundTint="@color/md_secondary_container"
+                    app:cornerRadius="24dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_tut_back"
+                    style="@style/Widget.Material3.Button"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="10dp"
+                    android:text="返回"
+                    android:textSize="15sp"
+                    app:cornerRadius="26dp" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+    </LinearLayout>
+</androidx.core.widget.NestedScrollView>

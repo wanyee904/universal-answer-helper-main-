@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="md_primary">#95D689</color>
+    <color name="md_on_primary">#003910</color>
+    <color name="md_primary_container">#14521C</color>
+    <color name="md_on_primary_container">#B0F1AC</color>
+    <color name="md_secondary_container">#384A34</color>
+    <color name="md_on_secondary_container">#D3E8CD</color>
+    <color name="md_surface">#11140F</color>
+    <color name="md_on_surface">#E1E3DA</color>
+    <color name="md_surface_container">#1D201A</color>
+    <color name="md_surface_container_high">#272B24</color>
+    <color name="md_surface_variant">#43483F</color>
+    <color name="md_on_surface_variant">#C3C8BC</color>
+    <color name="md_outline">#8D9287</color>
+    <color name="md_outline_variant">#43483F</color>
+    <color name="md_error">#FFB4AB</color>
+
+    <!-- 启动页：深色主题 黑底白标 -->
+    <color name="splash_bg">#0E100D</color>
+    <color name="splash_ink">#FFFFFF</color>
+
+    <color name="primary">#95D689</color>
+    <color name="primary_dark">#003910</color>
+    <color name="bg">#11140F</color>
+    <color name="white">#FFFFFF</color>
+    <color name="ic_launcher_background">#14521C</color>
+</resources>
