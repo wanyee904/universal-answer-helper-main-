@@ -6,15 +6,21 @@ import android.content.Intent
 import android.graphics.PixelFormat
 import android.graphics.Path
 import android.graphics.Rect
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.res.ColorStateList
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.view.Choreographer
 import android.view.Gravity
 import android.view.LayoutInflater
+import android.graphics.Outline
 import android.view.View
+import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -22,22 +28,39 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import com.example.answerhelper.R
+import com.example.answerhelper.answer.AiClient
 import com.example.answerhelper.answer.AnswerEngine
 import com.example.answerhelper.data.Answer
 import com.example.answerhelper.data.OptionBox
 import com.example.answerhelper.data.Question
 import com.example.answerhelper.data.QuestionKind
+import com.example.answerhelper.translate.PageParagraph
+import com.example.answerhelper.translate.PageTextExtractor
+import com.example.answerhelper.translate.TextNode
+import com.example.answerhelper.translate.PageTranslation
+import com.example.answerhelper.translate.TranslateBatchClient
+import com.example.answerhelper.translate.TranslatePipeline
+import com.example.answerhelper.util.ClipStore
 import com.example.answerhelper.util.Prefs
+import com.example.answerhelper.vision.ScreenshotOcr
+import com.example.answerhelper.vision.XwLog
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
 
 /**
  * 万能答题助手：通过无障碍服务直接读取当前界面的文本节点，
@@ -48,7 +71,13 @@ class AutoAnswerService : AccessibilityService() {
 
     companion object {
         @Volatile var instance: AutoAnswerService? = null
+
+        /** 两次截屏之间的最小间隔（系统对 takeScreenshot 有频率限制，撞上会直接失败）。 */
+        private const val OCR_MIN_INTERVAL_MS = 1100L
     }
+
+    /** 译文的数据来源：无障碍直接提取（A11Y）或截屏 OCR 兜底（OCR）。 */
+    private enum class TranslateSource { A11Y, OCR }
 
     private val handler = Handler(Looper.getMainLooper())
     private var scope: CoroutineScope? = null
@@ -68,7 +97,7 @@ class AutoAnswerService : AccessibilityService() {
     // 悬浮窗
     private var overlayView: View? = null
     private var overlayLp: WindowManager.LayoutParams? = null
-    private var ballView: TextView? = null
+    private var ballView: ImageView? = null
     private var ballLp: WindowManager.LayoutParams? = null
     private var tvResult: TextView? = null
     private var tvQuestion: TextView? = null
@@ -80,6 +109,7 @@ class AutoAnswerService : AccessibilityService() {
     private var btnTypeEssay: Button? = null
     private var btnTypeTranslate: Button? = null
     private var btnTypeCloze: Button? = null
+    private var btnTypeClipboard: Button? = null
     private var choiceModeRow: LinearLayout? = null
     private var btnChoiceSingle: Button? = null
     private var btnChoiceMulti: Button? = null
@@ -93,12 +123,57 @@ class AutoAnswerService : AccessibilityService() {
     private var optionsEditActions: LinearLayout? = null
     private var optionCountRow: LinearLayout? = null
     private var etOptionCount: EditText? = null
+    private var lastFocusedEditor: EditText? = null
+    private var clipPanel: LinearLayout? = null
+    private var clipList: LinearLayout? = null
     private var collapsed = false
 
     private val optionEditors = mutableListOf<EditText>()
     private var optionEditCount = 0
 
     private val readRunnable = Runnable { readAndSolve() }
+
+    // ---------- 翻译状态 ----------
+
+    private var overlayTranslateController: OverlayTranslateController? = null
+    private var translatePipeline: TranslatePipeline? = null
+
+    /** 当前页面的段落快照（含屏幕坐标）：整篇翻译的输入，也用于"同一页"复用判断。 */
+    private var lastTranslateParagraphs: List<PageParagraph> = emptyList()
+
+    private var translateActive = false
+
+    /** 每次整篇翻译自增；旧轮次的进度回调靠它丢弃。 */
+    private var translateToken = 0
+
+    /** 每次截屏采集自增。与 translateToken 分开：截屏重采不该把在飞的翻译轮次判死。 */
+    private var ocrToken = 0
+
+    private var translateJob: Job? = null
+
+    /** 当前译文的数据来源（无障碍提取 / 截屏 OCR 兜底），只用于日志与提示。 */
+    private var translateSource = TranslateSource.A11Y
+
+    /** 截屏通道的在途任务：同一时刻最多一次截屏 + 识别。 */
+    private var ocrJob: Job? = null
+
+    /** 截屏在飞标记：系统限制两次截屏的最小间隔，连发第二次会拿到 errorCode=3。 */
+    private var ocrBusy = false
+
+    /** 截屏在飞期间又来了一次采集请求：等这次结束后再补一次，而不是并发撞车。 */
+    private var ocrPending = false
+
+    /** 上一次真正发起截屏的时间戳（用于满足系统的最小间隔限制）。 */
+    private var lastScreenshotAt = 0L
+
+    /** 是否有整篇翻译轮次在飞：在飞时忽略重复的识别请求，避免同一页被翻两遍。 */
+    private var translateRoundBusy = false
+
+    /** 上一轮整篇译文，用于同一页重复识别时直接复用，不再重翻。 */
+    private var lastPageTranslation: PageTranslation? = null
+
+    /** 上一轮整篇翻译的段落文本快照：用来判断页面到底有没有变。 */
+    private var lastRoundTexts: List<String> = emptyList()
 
     private fun optionCount(): Int =
         (Prefs.get(this, "option_count", "4").toIntOrNull() ?: 4).coerceIn(2, 26)
@@ -111,10 +186,37 @@ class AutoAnswerService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        XwLog.init(this)
+        startClipboardWatcher()
+    }
+
+    /** 监听系统剪贴板：运行期间用户复制的文字自动存入应用剪贴板 */
+    private fun startClipboardWatcher() {
+        try {
+            val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+            cm.addPrimaryClipChangedListener {
+                try {
+                    val text = cm.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
+                    if (text.isNotBlank()) {
+                        if (ClipStore.load(this).firstOrNull() != text.trim()) {
+                            ClipStore.add(this, text)
+                            if (clipPanel?.visibility == View.VISIBLE) rebuildClipList()
+                        }
+                    }
+                } catch (_: Exception) {
+                }
+            }
+        } catch (_: Exception) {
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val type = event?.eventType ?: return
+        // 屏蔽悬浮窗自身引发的事件，防自我触发
+        if (event.packageName?.toString() == packageName) return
+        // 翻译不跟随源页面滚动：滚动事件一律忽略，弹窗内容只由用户点「识别」决定
+        if (type == AccessibilityEvent.TYPE_VIEW_SCROLLED) return
+        // 答题的自动识别轮询（与翻译无关，保留）
         if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
             type == AccessibilityEvent.TYPE_WINDOWS_CHANGED
@@ -199,6 +301,11 @@ class AutoAnswerService : AccessibilityService() {
         // 只保留已开启的功能类型
         blocks = blocks.filter { isKindEnabled(it.kind) }
         if (blocks.isEmpty()) {
+            if (currentKind == QuestionKind.TRANSLATE) {
+                // 无障碍提取为空（微信文章页这类不暴露节点的页面）→ 截屏 OCR 兜底
+                startTranslateViaOcr(force)
+                return
+            }
             updateOverlay("未识别到已开启题型的题目（可在主页开启更多功能）", null, null)
             return
         }
@@ -272,16 +379,48 @@ class AutoAnswerService : AccessibilityService() {
         }
     }
 
+    /**
+     * 翻译通道的采集：整棵树递归，不设长度上下限（collectItems 的 2..4000 过滤只服务选择题解析），
+     * 只要节点自身有非空文本就以屏幕坐标收下，零宽/零高节点不可见，跳过。
+     */
+    private fun collectAllTextNodes(node: AccessibilityNodeInfo, out: MutableList<TextNode>) {
+        val text = node.text?.toString()?.trim()
+        if (!text.isNullOrEmpty()) {
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            if (bounds.width() > 0 && bounds.height() > 0) {
+                out.add(TextNode(text, bounds.left, bounds.top, bounds.right, bounds.bottom))
+            }
+        }
+        for (i in 0 until node.childCount) {
+            node.getChild(i)?.let { collectAllTextNodes(it, out) }
+        }
+    }
+
+    /** 整页文本还原：节点 -> 逻辑行 -> 段落（段内换行、段间空行由 PageTextExtractor 负责）。 */
+    private fun extractPageParagraphs(root: AccessibilityNodeInfo): List<PageParagraph> {
+        val nodes = mutableListOf<TextNode>()
+        collectAllTextNodes(root, nodes)
+        return PageTextExtractor.extract(nodes, dp(6), dp(12))
+    }
+
     private fun extractBlocks(root: AccessibilityNodeInfo): List<Question> {
         val items = mutableListOf<TextItem>()
         collectItems(root, items)
-        if (items.isEmpty()) return emptyList()
+        // 翻译模式不吃 collectItems 的长度过滤，页面里没有“题目文本”时也要继续走整页通道
+        if (items.isEmpty() && currentKind != QuestionKind.TRANSLATE) return emptyList()
         val raw = items.joinToString("\n") { it.text }
 
         parseCloze(items, raw)?.let { return listOf(it) }
 
         if (currentKind == QuestionKind.TRANSLATE && isKindEnabled(QuestionKind.TRANSLATE)) {
-            return listOf(Question(QuestionKind.TRANSLATE, stem = raw, rawText = raw))
+            // 整页识别：无长度上限、保留排版，段落快照交给整篇翻译（块级缓存挂在管线上）
+            val paragraphs = extractPageParagraphs(root)
+            lastTranslateParagraphs = paragraphs
+            if (paragraphs.isEmpty()) return emptyList()
+            translateSource = TranslateSource.A11Y
+            val pageText = PageTextExtractor.toPageText(paragraphs)
+            return listOf(Question(QuestionKind.TRANSLATE, stem = pageText, rawText = pageText))
         }
 
         val sameNodeRegex = Regex("^\\s*([A-H])\\s*(?:[.、．:：]\\s*|\\s+)(.*)$")
@@ -577,6 +716,16 @@ class AutoAnswerService : AccessibilityService() {
     }
 
     private fun solveAndShow(question: Question, force: Boolean = false) {
+        if (question.kind == QuestionKind.TRANSLATE) {
+            // 翻译不走向答题引擎：走整篇管线，块内缓存与并行都在 TranslatePipeline 里
+            val fresh = lastTranslateParagraphs.takeIf {
+                it.isNotEmpty() && PageTextExtractor.toPageText(it) == question.stem
+            }
+            val paragraphs = fresh ?: paragraphsFromText(question.stem)
+            lastTranslateParagraphs = paragraphs
+            startTranslate(paragraphs, force)
+            return
+        }
         val s = scope ?: return
         s.launch {
             if (editing) return@launch
@@ -795,6 +944,15 @@ class AutoAnswerService : AccessibilityService() {
     }
 
     private fun switchKindAndSolve(kind: QuestionKind) {
+        if (kind == QuestionKind.TRANSLATE) {
+            // 切到翻译=重新识别整页：清掉旧缓存与段落，再走一次采集
+            currentKind = kind
+            renderTypeButtons(kind)
+            resetTranslateCache()
+            updateOverlay("已切换为翻译，正在识别整页文本…", null, null)
+            readAndSolve(force = true)
+            return
+        }
         val q = lastQuestion
         if (q == null) {
             currentKind = kind
@@ -851,6 +1009,10 @@ class AutoAnswerService : AccessibilityService() {
         btnTypeJudge?.text = if (kind == QuestionKind.JUDGE) "●判断题" else "判断题"
         btnTypeEssay?.text = if (kind == QuestionKind.ESSAY) "●大题" else "大题"
         btnTypeCloze?.text = if (kind == QuestionKind.CLOZE) "●完型填空" else "完型填空"
+        val panelOpen = clipPanel?.visibility == View.VISIBLE
+        btnTypeClipboard?.text = if (panelOpen) "●剪贴板" else "剪贴板"
+        btnTypeClipboard?.visibility =
+            if (Prefs.getBool(this, "kind_clipboard", true)) View.VISIBLE else View.GONE
         btnTypeTranslate?.text = if (kind == QuestionKind.TRANSLATE) "●翻译" else "翻译"
 
         btnTypeChoice?.visibility = if (choiceOn) View.VISIBLE else View.GONE
@@ -869,11 +1031,16 @@ class AutoAnswerService : AccessibilityService() {
     // ---------- 编辑 ----------
 
     private fun startEdit() {
-        val q = lastQuestion
-        if (q == null) {
-            updateOverlay("暂无可编辑的题目，请先识别", null, null)
-            return
-        }
+        val manual = lastQuestion == null
+        val q = lastQuestion ?: Question(
+            currentKind,
+            stem = "",
+            options = if (currentKind == QuestionKind.CHOICE) {
+                List(optionCount()) { i -> OptionBox(('A' + i).toString(), "", 0, 0, Rect()) }
+            } else {
+                emptyList()
+            }
+        )
         editing = true
         currentKind = q.kind
         renderTypeButtons(q.kind)
@@ -882,7 +1049,11 @@ class AutoAnswerService : AccessibilityService() {
         applyEditUiForKind(q.kind, q.options)
         setEditUi(true)
         setCollapsed(true)
-        updateOverlay("编辑题目中，确认后开始解题", null, null)
+        lastFocusedEditor = etStem
+        updateOverlay(
+            if (manual) "手动编辑：粘贴或输入题目后点确认" else "编辑题目中，确认后开始解题",
+            null, null
+        )
     }
 
     private fun applyEditUiForKind(kind: QuestionKind, options: List<OptionBox>) {
@@ -942,6 +1113,10 @@ class AutoAnswerService : AccessibilityService() {
             setTextColor(0xFFFFFFFF.toInt())
             textSize = 12f
             isSingleLine = true
+            isFocusable = true
+            isFocusableInTouchMode = true
+            isLongClickable = true
+            setOnFocusChangeListener { _, hasFocus -> if (hasFocus) lastFocusedEditor = this }
         }
         row.addView(label)
         row.addView(et, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -950,6 +1125,98 @@ class AutoAnswerService : AccessibilityService() {
     }
 
     private fun currentEditorTexts(): List<String> = optionEditors.map { it.text.toString().trim() }
+
+    private fun activeEditor(): EditText? = lastFocusedEditor ?: etStem
+
+    private fun dpInt(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private fun toggleClipPanel() {
+        val panel = clipPanel ?: return
+        if (panel.visibility == View.VISIBLE) {
+            panel.visibility = View.GONE
+        } else {
+            panel.visibility = View.VISIBLE
+            rebuildClipList()
+        }
+        renderTypeButtons(currentKind)
+    }
+
+    /** 复制到系统（输入法）剪贴板；应用内同时保留 */
+    private fun copyClipItem(text: String) {
+        try {
+            val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("题目", text))
+            Toast.makeText(this, "已复制到输入法剪贴板", Toast.LENGTH_SHORT).show()
+        } catch (_: Exception) {
+            Toast.makeText(this, "复制失败", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 每条内容：与「单选题」按钮同高，单行超出省略 */
+    private fun clipChip(text: String): Button =
+        Button(this).apply {
+            this.text = text.replace("\n", " ")
+            textSize = 11f
+            minHeight = 0
+            minWidth = 0
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            setPadding(dpInt(12), 0, dpInt(12), 0)
+            background = pillBackground(0x1FFFFFFF, 14f)
+            setTextColor(0xFFF2F5EF.toInt())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dpInt(32)
+            ).apply { topMargin = dpInt(6) }
+            setOnClickListener { copyClipItem(text) }
+        }
+
+    private fun rebuildClipList() {
+        val container = clipList ?: return
+        container.removeAllViews()
+        val items = ClipStore.load(this)
+        if (items.isEmpty()) {
+            container.addView(TextView(this).apply {
+                text = "暂无内容：复制任意文字后会自动存入"
+                setTextColor(0xFFAFB4A9.toInt())
+                textSize = 10f
+            })
+            return
+        }
+        items.forEach { value -> container.addView(clipChip(value)) }
+    }
+
+    private fun selectAllEditorText() {
+        val et = activeEditor() ?: return
+        et.requestFocus()
+        et.setSelection(0, et.text.length)
+    }
+
+    private fun copyEditorText() {
+        val et = activeEditor() ?: return
+        val content = et.text ?: return
+        val start = minOf(et.selectionStart, et.selectionEnd).coerceIn(0, content.length)
+        val end = maxOf(et.selectionStart, et.selectionEnd).coerceIn(0, content.length)
+        val piece = if (end > start) content.subSequence(start, end) else content
+        if (piece.isEmpty()) return
+        val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("题目", piece))
+        Toast.makeText(this, "已复制 ${piece.length} 字", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun pasteIntoEditor() {
+        val et = activeEditor() ?: return
+        val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = cm.primaryClip ?: return
+        val pasted = clip.getItemAt(0).coerceToText(this)?.toString().orEmpty()
+        if (pasted.isEmpty()) return
+        val content = et.text ?: return
+        val start = minOf(et.selectionStart, et.selectionEnd).coerceIn(0, content.length)
+        val end = maxOf(et.selectionStart, et.selectionEnd).coerceIn(0, content.length)
+        content.replace(start, end, pasted)
+        et.setSelection((start + pasted.length).coerceAtMost(content.length))
+        Toast.makeText(this, "已粘贴", Toast.LENGTH_SHORT).show()
+    }
 
     private fun addOptionRow() {
         val newCount = (optionEditCount + 1).coerceAtMost(26)
@@ -1056,6 +1323,7 @@ class AutoAnswerService : AccessibilityService() {
         btnTypeEssay = view.findViewById(R.id.btn_type_essay)
         btnTypeTranslate = view.findViewById(R.id.btn_type_translate)
         btnTypeCloze = view.findViewById(R.id.btn_type_cloze)
+        btnTypeClipboard = view.findViewById(R.id.btn_type_clipboard)
         choiceModeRow = view.findViewById(R.id.choice_mode_row)
         btnChoiceSingle = view.findViewById(R.id.btn_choice_single)
         btnChoiceMulti = view.findViewById(R.id.btn_choice_multi)
@@ -1067,14 +1335,22 @@ class AutoAnswerService : AccessibilityService() {
         optionsEditActions = view.findViewById(R.id.options_edit_actions)
         optionCountRow = view.findViewById(R.id.option_count_row)
         etOptionCount = view.findViewById(R.id.et_option_count)
+        clipPanel = view.findViewById(R.id.clip_panel)
+        clipList = view.findViewById(R.id.clip_list)
         view.findViewById<MaxHeightScrollView>(R.id.content_scroll)?.maxHeight =
             resources.displayMetrics.heightPixels / 3
 
         // “框题”按钮在本版本不需要，隐藏
         view.findViewById<Button>(R.id.btn_region)?.visibility = View.GONE
 
+        etStem?.setOnFocusChangeListener { _, hasFocus -> if (hasFocus) lastFocusedEditor = etStem }
+        etSub?.setOnFocusChangeListener { _, hasFocus -> if (hasFocus) lastFocusedEditor = etSub }
         etOptionCount?.setOnFocusChangeListener { _, hasFocus ->
-            if (!hasFocus) applyOptionCount()
+            if (hasFocus) {
+                lastFocusedEditor = etOptionCount
+            } else {
+                applyOptionCount()
+            }
         }
         etOptionCount?.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_DONE) {
@@ -1086,12 +1362,19 @@ class AutoAnswerService : AccessibilityService() {
             }
         }
 
-        view.findViewById<Button>(R.id.btn_capture).setOnClickListener { readAndSolve(force = true) }
+        view.findViewById<Button>(R.id.btn_capture).setOnClickListener {
+            resetTranslateCache()
+            readAndSolve(force = true)
+        }
         view.findViewById<Button>(R.id.btn_prev).setOnClickListener { prevQuestion() }
         view.findViewById<Button>(R.id.btn_next).setOnClickListener { nextQuestion() }
         view.findViewById<Button>(R.id.btn_edit).setOnClickListener { startEdit() }
         view.findViewById<Button>(R.id.btn_edit_confirm).setOnClickListener { confirmEdit() }
         view.findViewById<Button>(R.id.btn_edit_cancel).setOnClickListener { cancelEdit() }
+        btnTypeClipboard?.setOnClickListener { toggleClipPanel() }
+        view.findViewById<Button>(R.id.btn_sel_all).setOnClickListener { selectAllEditorText() }
+        view.findViewById<Button>(R.id.btn_copy).setOnClickListener { copyEditorText() }
+        view.findViewById<Button>(R.id.btn_paste).setOnClickListener { pasteIntoEditor() }
         view.findViewById<Button>(R.id.btn_add_option).setOnClickListener { addOptionRow() }
         view.findViewById<Button>(R.id.btn_remove_option).setOnClickListener { removeOptionRow() }
         btnTypeChoice?.setOnClickListener { onTypeButton(QuestionKind.CHOICE) }
@@ -1099,11 +1382,19 @@ class AutoAnswerService : AccessibilityService() {
         btnTypeEssay?.setOnClickListener { onTypeButton(QuestionKind.ESSAY) }
         btnTypeTranslate?.setOnClickListener { onTypeButton(QuestionKind.TRANSLATE) }
         btnTypeCloze?.setOnClickListener { onTypeButton(QuestionKind.CLOZE) }
+        renderTypeButtons(currentKind)
         view.findViewById<Button>(R.id.btn_resolve).setOnClickListener { resolveCurrent() }
         btnChoiceSingle?.setOnClickListener { setMultiChoice(false) }
         btnChoiceMulti?.setOnClickListener { setMultiChoice(true) }
         btnCollapse?.setOnClickListener { collapseToBall() }
         view.findViewById<Button>(R.id.btn_close).setOnClickListener { stopHelper() }
+
+        // 译文区控制器：只接管 overlay_root 内的 translate_card 子树，不改动既有控件
+        OverlayTranslateController(view).also { controller ->
+            controller.setMode(translateModePref())
+            controller.setOnModeChange { mode -> Prefs.set(this, "translate_mode", mode.name) }
+            overlayTranslateController = controller
+        }
 
         overlayLp = lp
         wm.addView(view, lp)
@@ -1120,15 +1411,38 @@ class AutoAnswerService : AccessibilityService() {
         }
         overlayView = null
         overlayLp = null
+        // 译文区随窗口一起消失：清掉在途任务与缓存，避免下次进入还残留旧译文
+        translateJob?.cancel()
+        translateJob = null
+        ocrJob?.cancel()
+        ocrJob = null
+        ocrBusy = false
+        ocrPending = false
+        translateToken++
+        ocrToken++
+        translatePipeline?.invalidate()
+        translatePipeline = null
+        lastTranslateParagraphs = emptyList()
+        lastPageTranslation = null
+        lastRoundTexts = emptyList()
+        translateRoundBusy = false
+        translateActive = false
+        overlayTranslateController = null
     }
 
     private fun updateOverlay(status: String, question: Question?, answer: Answer?) {
+        // 翻译模式只更新状态时 question 为 null，不能据此判定“已经离开翻译”：
+        // 否则每条进度/提示都会把 translateActive 打成 false 并清空缓存，
+        // 译文回来时被丢弃（表现为点了“识别”什么都不出）。
+        val translateOn = question?.kind == QuestionKind.TRANSLATE ||
+            (question == null && currentKind == QuestionKind.TRANSLATE)
+        setTranslateUi(translateOn)
         tvResult?.text = status
-        tvQuestion?.text = question?.let {
+        // 翻译模式下正文交给译文区，题干区让位
+        tvQuestion?.text = if (translateOn) "" else question?.let {
             when (it.kind) {
                 QuestionKind.ESSAY ->
                     if (it.subQuestion.isBlank()) it.stem else it.stem + "\n问题：" + it.subQuestion
-                QuestionKind.TRANSLATE -> "原文：\n" + it.stem
                 else -> it.stem
             }
         } ?: ""
@@ -1145,7 +1459,7 @@ class AutoAnswerService : AccessibilityService() {
                     val colors = optionColors(question, answer)
                     for (opt in question.options) {
                         container.addView(
-                            makeOptionButton("${opt.label}. ${opt.text}", opt.label, colors[opt.label])
+                            makeOptionButton(opt.label + ". " + opt.text, opt.label, colors[opt.label])
                         )
                     }
                 }
@@ -1166,15 +1480,14 @@ class AutoAnswerService : AccessibilityService() {
                 QuestionKind.ESSAY, QuestionKind.TRANSLATE -> Unit
             }
         }
-        tvReason?.text = answer?.let {
-            if (question?.kind == QuestionKind.TRANSLATE) {
-                "译文：\n" + it.text
-            } else {
-                "来源：${it.source}  置信度：${(it.confidence * 100).toInt()}%  理由：${it.reason}"
-            }
+        tvReason?.text = if (translateOn) "" else answer?.let {
+            "来源：" + it.source + "  置信度：" + (it.confidence * 100).toInt() + "%  理由：" + it.reason
         } ?: ""
         setCollapsed(question == null && answer == null && collapsed)
     }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
 
     private fun pillBackground(color: Int, radiusDp: Float = 12f): Drawable {
         val solid = GradientDrawable().apply {
@@ -1204,7 +1517,7 @@ class AutoAnswerService : AccessibilityService() {
 
     private fun makeBlankButton(blank: Int, letter: String): Button {
         return Button(this).apply {
-            text = "第${blank}空 → $letter"
+            text = "第" + blank + "空 → " + letter
             textSize = 12f
             minHeight = 0
             setPadding(16, 9, 16, 9)
@@ -1221,6 +1534,303 @@ class AutoAnswerService : AccessibilityService() {
         optionsContainer?.visibility = if ((optionsContainer?.childCount ?: 0) > 0) visible else View.GONE
         tvReason?.visibility = if (tvReason?.text?.isNotEmpty() == true) visible else View.GONE
         btnCollapse?.text = if (c) "展开" else "收起"
+    }
+
+    // ---------- 翻译 ----------
+
+    /**
+     * 悬浮窗在屏幕上的底边绝对 y（未显示时返回 0）。
+     * 悬浮窗是 TYPE_APPLICATION_OVERLAY + gravity=TOP，窗口顶边不在 y=0（被状态栏顶下一截），
+     * 所以“要不要裁 / 裁多少”必须用屏幕绝对坐标，只取 height 会漏掉悬浮窗最后一行。
+     */
+    private fun overlayBottomPx(): Int {
+        val view = overlayView ?: return 0
+        if (view.visibility != View.VISIBLE) return 0
+        val height = view.height
+        if (height <= 0) return 0
+        val loc = IntArray(2)
+        view.getLocationOnScreen(loc)
+        val top = if (loc[1] > 0) loc[1] else 0
+        return top + height
+    }
+
+    /** 状态栏高度（px）：隐藏悬浮窗截屏时用来把状态栏排除在正文之外。 */
+    private fun statusBarHeightPx(): Int {
+        val id = resources.getIdentifier("status_bar_height", "dimen", "android")
+        val value = if (id > 0) resources.getDimensionPixelSize(id) else 0
+        return (value + dp(4)).coerceAtLeast(0)
+    }
+
+    /** 等 UI 真正画完若干帧：临时隐藏悬浮窗后必须等合成器出新帧，否则截到的还是旧画面。 */
+    private suspend fun awaitFrames(count: Int) {
+        repeat(count) {
+            suspendCancellableCoroutine<Unit> { cont ->
+                Choreographer.getInstance().postFrameCallback {
+                    if (cont.isActive) cont.resume(Unit)
+                }
+            }
+        }
+    }
+
+    /**
+     * 截屏 OCR -> TextNode -> 段落，坐标保持整屏像素；任何异常都退化成空列表。
+     *
+     * 悬浮窗自身的画面必须排除，否则按钮/译文会被 OCR 成“原文”再翻一遍（自反馈污染）：
+     * - 悬浮窗占小半屏：按它的屏幕底边裁掉顶部，不闪屏；
+     * - 悬浮窗盖住大半屏（翻译卡片展开时）：截屏前临时隐藏窗口，截完立刻恢复，
+     *   否则裁完只剩很窄一条，反而会把译文卡片的下半部分当成正文。
+     */
+    private suspend fun captureOcrParagraphs(): List<PageParagraph> {
+        val screenHeight = resources.displayMetrics.heightPixels
+        val bottom = overlayBottomPx()
+        val hideOverlay = bottom * 2 > screenHeight
+        // 悬浮窗底边按 widget 高度测出来会少最后一行的几像素（按钮文字下半截仍被截进画面，
+        // 会被 OCR 成"选择题/判断题/大题/翻译"混进正文），所以再留一截安全边距。
+        val margin = dp(16)
+        // 隐藏悬浮窗时整屏参与识别，但状态栏（时间/运营商）不是正文，按状态栏高度裁掉
+        val skipTopPx = if (hideOverlay) {
+            statusBarHeightPx()
+        } else {
+            (bottom + margin).coerceIn(0, screenHeight / 2)
+        }
+        XwLog.d {
+            "ocrCapture: overlayBottom=" + bottom + " screenH=" + screenHeight +
+                " hide=" + hideOverlay + " skipTopPx=" + skipTopPx
+        }
+
+        val view = overlayView
+        // 隐藏/恢复必须包在同一个 try/finally 里：中途被取消（新一轮采集/resetTranslateCache）
+        // 也要把悬浮窗恢复可见，否则一次取消就把悬浮窗永久藏起来了。
+        if (hideOverlay) view?.visibility = View.INVISIBLE
+        val nodes = try {
+            if (hideOverlay) awaitFrames(2)
+            ScreenshotOcr.capture(this, skipTopPx)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyList()
+        } finally {
+            if (hideOverlay && view != null) view.visibility = View.VISIBLE
+        }
+        XwLog.d { "a11y->ocr: textNodes=" + nodes.size }
+        if (nodes.isEmpty()) return emptyList()
+        return withContext(Dispatchers.Default) {
+            try {
+                val paragraphs = PageTextExtractor.extract(nodes, dp(6), dp(12))
+                XwLog.d { "a11y->ocr: paragraphs=" + paragraphs.size }
+                paragraphs
+            } catch (e: Exception) {
+                XwLog.d { "a11y->ocr: extract threw " + e.javaClass.simpleName + ": " + e.message }
+                emptyList()
+            }
+        }
+    }
+
+    /**
+     * 截屏 OCR 兜底：在协程里截屏 + 识别（不阻塞主线程），拿到段落后再走与无障碍完全一致的
+     * PageTextExtractor -> TranslatePipeline -> 译文区 管线。
+     * translateToken 负责丢弃过期结果，ocrBusy/ocrPending 保证同一时刻只有一次截屏在飞。
+     */
+    private fun startTranslateViaOcr(force: Boolean = false) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            updateOverlay("该页面不提供文本，Android 11 以下无法截屏识别", lastQuestion, null)
+            return
+        }
+        val s = scope ?: return
+        // 系统限制截屏频率：上一张还在飞时再发一次会被拒（errorCode=3 INTERVAL_TIME_SHORT）。
+        // 之前是“取消旧的 + 立刻开新的”，正好撞上这个限制，结果就是用户看到的“未取到文字”。
+        if (ocrBusy) {
+            ocrPending = true
+            XwLog.d { "ocrBranch: busy -> pending" }
+            return
+        }
+        ocrBusy = true
+        val token = ++ocrToken
+        XwLog.d { "ocrBranch: enter force=" + force + " thread=" + Thread.currentThread().name }
+        ocrJob = s.launch {
+            try {
+                val since = System.currentTimeMillis() - lastScreenshotAt
+                if (since < OCR_MIN_INTERVAL_MS) delay(OCR_MIN_INTERVAL_MS - since)
+                val paragraphs = captureOcrParagraphs()
+                lastScreenshotAt = System.currentTimeMillis()
+                if (token != ocrToken) {
+                    XwLog.d { "ocrBranch: stale capture token=" + token + " now=" + ocrToken }
+                    return@launch
+                }
+                if (paragraphs.isEmpty()) {
+                    XwLog.d { "ocrBranch: paragraphs empty -> 未取到文字" }
+                    updateOverlay("截屏识别未取到文字，请确认正文已显示后重试", lastQuestion, null)
+                    return@launch
+                }
+                translateSource = TranslateSource.OCR
+                lastTranslateParagraphs = paragraphs
+                XwLog.d { "ocrBranch: paragraphs=" + paragraphs.size + " source=OCR -> startTranslate" }
+                startTranslate(paragraphs, force)
+            } finally {
+                ocrBusy = false
+                if (ocrPending) {
+                    // 在飞期间用户又点了一次识别：这次结束后补一次（截屏频率由 OCR_MIN_INTERVAL_MS 兜住）
+                    ocrPending = false
+                    XwLog.d { "ocrBranch: flush pending -> retry once" }
+                    startTranslateViaOcr()
+                }
+            }
+        }
+    }
+
+    /** 管线实例跨滚动复用：段落级缓存挂在实例上，重建实例等于每次都重新翻整页。 */
+    private fun requireTranslatePipeline(): TranslatePipeline {
+        translatePipeline?.let { return it }
+        val created = TranslatePipeline(
+            translator = { text ->
+                // 逐段通道：AiClient.ask 已内置翻译提示词与 JSON 解析；null 视为失败，由管线重试/回退原文
+                val started = System.currentTimeMillis()
+                val answer = AiClient.ask(this@AutoAnswerService, Question(QuestionKind.TRANSLATE, stem = text))
+                XwLog.d {
+                    "single: len=" + text.length + " cost=" + (System.currentTimeMillis() - started) +
+                        "ms ok=" + (answer?.text?.isNotBlank() == true)
+                }
+                answer?.text ?: throw IllegalStateException("翻译请求失败")
+            },
+            batchTranslator = { segments ->
+                // 批量通道：一次请求翻一批相邻段落，按一行 <<<SEG>>> 分隔回填；null = 退回逐段
+                val started = System.currentTimeMillis()
+                val result = TranslateBatchClient.translate(this@AutoAnswerService, segments)
+                XwLog.d {
+                    "batch: segs=" + segments.size + " chars=" + segments.sumOf { it.length } +
+                        " cost=" + (System.currentTimeMillis() - started) + "ms parsed=" + (result?.size ?: -1)
+                }
+                result
+            }
+        )
+        translatePipeline = created
+        return created
+    }
+
+    /** bind() 会把模式重置为 TRANSLATED，所以每次 bind 都要把持久化模式传进去。 */
+    private fun translateModePref(): OverlayTranslateController.Mode =
+        try {
+            OverlayTranslateController.Mode.valueOf(Prefs.get(this, "translate_mode", "TRANSLATED"))
+        } catch (_: IllegalArgumentException) {
+            OverlayTranslateController.Mode.TRANSLATED
+        }
+
+    /** 手动编辑/兜底文本没有屏幕坐标：按空行切段，保证仍能分段翻译。 */
+    private fun paragraphsFromText(text: String): List<PageParagraph> =
+        text.split(Regex("\n{2,}"))
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .mapIndexed { i, t -> PageParagraph(i, t, 0, 0, t.count { ch -> ch == '\n' } + 1) }
+
+    /** 进入/退出翻译 UI；退出即清缓存与在途任务，避免下次进入直接展示旧译文。 */
+    private fun setTranslateUi(active: Boolean) {
+        if (active == translateActive) return
+        translateActive = active
+        if (!active) resetTranslateCache()
+    }
+
+    /** 重新识别 / 离开翻译模式 / 关闭悬浮窗时调用：清空块级缓存与段落快照。 */
+    private fun resetTranslateCache() {
+        // 兜底：任何路径取消采集后都要让悬浮窗回到可见
+        overlayView?.visibility = View.VISIBLE
+        translateJob?.cancel()
+        translateJob = null
+        ocrJob?.cancel()
+        ocrJob = null
+        ocrBusy = false
+        ocrPending = false
+        translateToken++
+        ocrToken++
+        translateSource = TranslateSource.A11Y
+        translateRoundBusy = false
+        lastPageTranslation = null
+        lastRoundTexts = emptyList()
+        translatePipeline?.invalidate()
+        lastTranslateParagraphs = emptyList()
+        overlayTranslateController?.clear()
+    }
+
+    /**
+     * 整篇翻译：整页段落一次性交给 [TranslatePipeline]，块内按预算合并、缓存命中即跳过，
+     * 输出按段落顺序拼成整篇文本。翻译期间只有整篇文本在增长，没有任何滚动触发的重翻。
+     */
+    private fun startTranslate(paragraphs: List<PageParagraph>, force: Boolean = false) {
+        if (paragraphs.isEmpty()) {
+            updateOverlay("未识别到文本，请对准页面后重试", lastQuestion, null)
+            return
+        }
+        val texts = paragraphs.map { it.text }
+        if (translateRoundBusy) {
+            // 慢请求还在飞：忽略重复请求（没有滚动跟随，等待期间不会再有自动刷新）
+            XwLog.d { "translate: busy -> ignore paragraphs=" + paragraphs.size }
+            return
+        }
+        val cached = lastPageTranslation
+        if (!force && cached != null && texts == lastRoundTexts) {
+            // 页面文本没变（重复点识别 / 同一页重读）：直接复用上一轮整篇译文
+            XwLog.d { "translate: same page -> reuse segments=" + cached.segmentCount }
+            showPageTranslation(cached)
+            return
+        }
+        val s = scope ?: return
+        val pipeline = requireTranslatePipeline()
+        if (force) pipeline.invalidate()
+        val token = ++translateToken
+        XwLog.d {
+            "translate: start token=" + token + " paragraphs=" + paragraphs.size +
+                " chars=" + paragraphs.sumOf { it.text.length } + " force=" + force +
+                " source=" + translateSource + " active=" + translateActive
+        }
+        translateRoundBusy = true
+        lastRoundTexts = texts
+        translateJob = s.launch {
+            val page = try {
+                withContext(Dispatchers.Default) {
+                    pipeline.translatePage(paragraphs) { partial ->
+                        handler.post {
+                            if (token != translateToken || !translateActive) return@post
+                            // 进度只让整篇文本逐批变长 + 状态行计数，不做逐段上屏
+                            showPageTranslation(partial)
+                            tvResult?.text =
+                                "正在翻译 " + partial.segmentCount + "/" + paragraphs.size + " 段"
+                        }
+                    }
+                }
+            } catch (e: CancellationException) {
+                translateRoundBusy = false
+                throw e
+            } catch (_: Exception) {
+                PageTranslation.EMPTY
+            }
+            if (token != translateToken) {
+                XwLog.d { "translate: drop stale token=" + token + " now=" + translateToken }
+                translateRoundBusy = false
+                return@launch
+            }
+            translateRoundBusy = false
+            XwLog.d {
+                "translate: done token=" + token + " segments=" + page.segmentCount +
+                    " failed=" + page.failedCount + " chars=" + page.translated.length
+            }
+            if (page.isEmpty) {
+                tvResult?.text = "未识别到文本，请对准页面后重试"
+                return@launch
+            }
+            lastPageTranslation = page
+            showPageTranslation(page)
+            tvResult?.text = "译文 " + page.segmentCount + " 段" +
+                if (page.failedCount > 0) {
+                    " · " + page.failedCount + " 段翻译失败（已回退原文）"
+                } else {
+                    ""
+                }
+        }
+    }
+
+    /** 把整篇原文/译文交给悬浮窗译文区：两块整篇文本，内容与滚动位置都由用户自己掌握。 */
+    private fun showPageTranslation(page: PageTranslation) {
+        if (!translateActive) return
+        overlayTranslateController?.bind(page)
     }
 
     // ---------- 悬浮球 ----------
@@ -1240,7 +1850,7 @@ class AutoAnswerService : AccessibilityService() {
         if (ballView != null) return
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
         val dm = resources.displayMetrics
-        val size = (48 * dm.density).toInt()
+        val size = (56 * dm.density).toInt()
         val lp = WindowManager.LayoutParams(
             size, size,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
@@ -1249,22 +1859,28 @@ class AutoAnswerService : AccessibilityService() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = dm.widthPixels - size - 24
+            x = dm.widthPixels - size - 20
             y = dm.heightPixels / 3
         }
-        val ball = TextView(this).apply {
-            text = "答"
-            textSize = 16f
-            setTextColor(0xFFFFFFFF.toInt())
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(0xE6FB7299.toInt())
+
+        val pad = (14 * dm.density).toInt()
+        val ball = ImageView(this).apply {
+            setImageResource(R.drawable.splash_logo)
+            setColorFilter(0xFFFFFFFF.toInt())
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(pad, pad, pad, pad)
+            background = getDrawable(R.drawable.bg_ball)
+            elevation = 8 * dm.density
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setOval(0, 0, view.width, view.height)
+                }
             }
         }
         wm.addView(ball, lp)
         ballView = ball
         ballLp = lp
+
         var startX = 0
         var startY = 0
         var touchX = 0f
@@ -1281,9 +1897,8 @@ class AutoAnswerService : AccessibilityService() {
                 }
                 android.view.MotionEvent.ACTION_MOVE -> {
                     val l = ballLp ?: return@setOnTouchListener false
-                    val s = (48 * resources.displayMetrics.density).toInt()
-                    l.x = (startX + (e.rawX - touchX).toInt()).coerceIn(0, resources.displayMetrics.widthPixels - s)
-                    l.y = (startY + (e.rawY - touchY).toInt()).coerceIn(0, resources.displayMetrics.heightPixels - s)
+                    l.x = (startX + (e.rawX - touchX).toInt()).coerceIn(0, dm.widthPixels - size)
+                    l.y = (startY + (e.rawY - touchY).toInt()).coerceIn(0, dm.heightPixels - size)
                     ballView?.let { wm.updateViewLayout(it, l) }
                     true
                 }

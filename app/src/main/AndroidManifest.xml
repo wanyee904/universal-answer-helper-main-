@@ -28,6 +28,11 @@
             android:exported="false" />
 
         <activity
+            android:name=".ClipboardActivity"
+            android:exported="false"
+            android:label="管理剪贴板" />
+
+        <activity
             android:name=".TutorialActivity"
             android:exported="false"
             android:label="使用教程" />

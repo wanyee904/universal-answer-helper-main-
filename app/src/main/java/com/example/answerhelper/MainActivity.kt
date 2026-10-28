@@ -32,6 +32,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var switchKindCloze: SwitchMaterial
     private lateinit var switchKindTranslate: SwitchMaterial
     private lateinit var switchClozeUnique: SwitchMaterial
+    private lateinit var switchKindClipboard: SwitchMaterial
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,6 +52,7 @@ class MainActivity : AppCompatActivity() {
         switchKindCloze = findViewById(R.id.switch_kind_cloze)
         switchKindTranslate = findViewById(R.id.switch_kind_translate)
         switchClozeUnique = findViewById(R.id.switch_cloze_unique)
+        switchKindClipboard = findViewById(R.id.switch_kind_clipboard)
 
         switchKindCloze.setOnCheckedChangeListener { _, checked ->
             switchClozeUnique.visibility = if (checked) View.VISIBLE else View.GONE
@@ -65,6 +67,9 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
         findViewById<Button>(R.id.btn_start).setOnClickListener { requestStart() }
+        findViewById<Button>(R.id.btn_manage_clip).setOnClickListener {
+            startActivity(Intent(this, ClipboardActivity::class.java))
+        }
         findViewById<Button>(R.id.btn_tutorial).setOnClickListener {
             startActivity(Intent(this, TutorialActivity::class.java))
         }
@@ -141,6 +146,7 @@ class MainActivity : AppCompatActivity() {
         Prefs.setBool(this, "kind_cloze", switchKindCloze.isChecked)
         Prefs.setBool(this, "kind_translate", switchKindTranslate.isChecked)
         Prefs.setBool(this, "cloze_unique", switchClozeUnique.isChecked)
+        Prefs.setBool(this, "kind_clipboard", switchKindClipboard.isChecked)
     }
 
     private fun loadPrefs() {
@@ -157,6 +163,7 @@ class MainActivity : AppCompatActivity() {
         switchKindCloze.isChecked = Prefs.getBool(this, "kind_cloze", true)
         switchKindTranslate.isChecked = Prefs.getBool(this, "kind_translate", true)
         switchClozeUnique.isChecked = Prefs.getBool(this, "cloze_unique", true)
+        switchKindClipboard.isChecked = Prefs.getBool(this, "kind_clipboard", true)
         switchClozeUnique.visibility = if (switchKindCloze.isChecked) View.VISIBLE else View.GONE
     }
 }

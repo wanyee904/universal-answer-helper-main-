@@ -17,6 +17,10 @@
     <color name="md_outline_variant">#C3C8BC</color>
     <color name="md_error">#BA1A1A</color>
 
+    <!-- 悬浮窗翻译区：段落块表面（M3 surface-container-lowest）+ 按压态 -->
+    <color name="md_surface_container_lowest">#FFFFFF</color>
+    <color name="md_state_pressed">#1F000000</color>
+
     <!-- 启动页：浅色主题 白底黑标 -->
     <color name="splash_bg">#FFFFFF</color>
     <color name="splash_ink">#000000</color>

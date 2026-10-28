@@ -41,4 +41,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jsoup:jsoup:1.17.2")
     implementation("com.google.code.gson:gson:2.11.0")
+    // 截屏 OCR 兜底通道：bundled 变体（模型打进 APK，设备无 Google Play 服务也能识别）
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
 }

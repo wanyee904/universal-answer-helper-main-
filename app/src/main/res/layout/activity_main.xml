@@ -63,6 +63,15 @@
                     android:textColor="@color/md_on_surface_variant"
                     android:textSize="12sp" />
 
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:lineSpacingExtra="2dp"
+                    android:text="提示：答题正确率只与 AI 有关，与本应用无关。"
+                    android:textColor="@color/md_error"
+                    android:textSize="12sp" />
+
                 <EditText
                     android:id="@+id/et_base"
                     android:layout_width="match_parent"
@@ -212,6 +221,15 @@
                     android:text="翻译"
                     android:textColor="@color/md_on_surface"
                     android:textSize="14sp" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/switch_kind_clipboard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp"
+                    android:text="剪贴板（应用内独立保存，数量不限）"
+                    android:textColor="@color/md_on_surface"
+                    android:textSize="14sp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -323,6 +341,18 @@
                 app:backgroundTint="@color/md_secondary_container"
                 app:cornerRadius="24dp" />
         </LinearLayout>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_manage_clip"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="10dp"
+            android:text="管理剪贴板"
+            android:textColor="@color/md_on_secondary_container"
+            android:textSize="14sp"
+            app:backgroundTint="@color/md_secondary_container"
+            app:cornerRadius="24dp" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_tutorial"
